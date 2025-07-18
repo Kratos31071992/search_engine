@@ -64,7 +64,7 @@ public:
         }
 
         json requestsData;
-        requestsFile >> requestsFile;
+        requestsFile >> requestsData;
         requestsFile.close();
 
         if (!requestsData.contains("requests")) {
