@@ -6,6 +6,7 @@
 #include <string>
 #include <algorithm>
 #include <cmath>
+#include <map>
 
 /**
  * @struct RelativeIndex
@@ -18,6 +19,11 @@ struct RelativeIndex {
     // Оператор сравнения для тестирования
     bool operator==(const RelativeIndex& other) const {
         return (doc_id == other.doc_id && fabs(rank - other.rank) < 1e-6);
+    }
+
+    // Оператор для удобного преобразования в pair
+    operator std::pair<int, float>() const {
+        return {static_cast<int>(doc_id), rank};
     }
 };
 
@@ -56,6 +62,14 @@ private:
      * @return Вектор RelativeIndex с относительной релевантностью (0..1)
      */
     std::vector<RelativeIndex> calculateRelativeRank(const std::vector<std::pair<size_t, float>>& found_docs);
+
+    /**
+     * @brief Преобразует результаты в формат для ConverterJSON
+     * @param results Результаты поиска в формате RelativeIndex
+     * @return Результаты в формате пар (int, float)
+     */
+    std::vector<std::vector<std::pair<int, float>>> convertResults(
+        const std::vector<std::vector<RelativeIndex>>& results);
 };
 
 #endif // SEARCHSERVER_H
