@@ -1,61 +1,74 @@
 #include "InvertedIndex.h"
-#include <thread>
 #include <sstream>
 #include <algorithm>
-#include <mutex>
+#include <future>
+#include <vector>
 
 void InvertedIndex::UpdateDocumentBase(std::vector<std::string> input_docs) {
-    docs = std::move(input_docs); // Перемещаем данные вместо копирования
-    freq_dictionary.clear(); // Очищаем предыдущий индекс
+    if (input_docs.empty()) {
+        throw std::runtime_error("Input documents cannot be empty");
+    }
 
-    std::vector<std::thread> threads;
-    threads.reserve(docs.size()); // Оптимизация выделения памяти
+    docs = std::move(input_docs);
+    freq_dictionary.clear();
 
-    // Запускаем потоки для индексации каждого документа
+    std::vector<std::future<void>> futures;
+    std::vector<std::exception_ptr> exceptions;
+
     for (size_t doc_id = 0; doc_id < docs.size(); ++doc_id) {
-        threads.emplace_back([this, doc_id]() {
-            indexDocument(doc_id, docs[doc_id]);
-        });
+        if (docs[doc_id].empty()) {
+            continue; // Пропускаем пустые документы
+        }
+
+        futures.emplace_back(std::async(std::launch::async, [this, doc_id, &exceptions]() {
+            try {
+                indexDocument(doc_id, docs[doc_id]);
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(dict_mutex);
+                exceptions.push_back(std::current_exception());
+            }
+        }));
     }
 
     // Ожидаем завершения всех потоков
-    for (auto& thread : threads) {
-        thread.join();
+    for (auto& future : futures) {
+        future.get();
+    }
+
+    // Проверяем исключения
+    if (!exceptions.empty()) {
+        std::rethrow_exception(exceptions.front());
     }
 }
 
 void InvertedIndex::indexDocument(size_t doc_id, const std::string& doc_content) {
-    std::map<std::string, size_t> word_counts; // Локальный счетчик слов
-    std::stringstream ss(doc_content);
-    std::string word;
-
-    // Разбиваем текст на слова и считаем частоту
-    while (ss >> word) {
-        // Приводим слово к lowercase для регистронезависимого поиска
-        std::transform(word.begin(), word.end(), word.begin(),
-            [](unsigned char c){ return std::tolower(c); });
-        word_counts[word]++;
+    if (doc_content.empty()) {
+        return;
     }
 
-    // Блокируем доступ к общему словарю
+    std::map<std::string, size_t> word_counts;
+    std::istringstream iss(doc_content);
+    std::string word;
+
+    while (iss >> word) {
+        std::transform(word.begin(), word.end(), word.begin(),
+            [](unsigned char c){ return std::tolower(c); });
+        ++word_counts[word];
+    }
+
     std::lock_guard<std::mutex> lock(dict_mutex);
-    
-    // Обновляем глобальный индекс
     for (const auto& [word, count] : word_counts) {
         freq_dictionary[word].push_back({doc_id, count});
     }
 }
 
-std::vector<Entry> InvertedIndex::GetWordCount(const std::string& word) {
+std::vector<Entry> InvertedIndex::GetWordCount(const std::string& word) const {
     std::string lowercase_word = word;
     std::transform(lowercase_word.begin(), lowercase_word.end(), lowercase_word.begin(),
         [](unsigned char c){ return std::tolower(c); });
 
-    std::lock_guard<std::mutex> lock(dict_mutex); // Для потокобезопасного чтения
-    
-    auto it = freq_dictionary.find(lowercase_word);
-    if (it != freq_dictionary.end()) {
-        // Возвращаем копию данных (потокобезопасно)
+    std::lock_guard<std::mutex> lock(dict_mutex);
+    if (auto it = freq_dictionary.find(lowercase_word); it != freq_dictionary.end()) {
         return it->second;
     }
     return {};
